@@ -1,17 +1,32 @@
+# .dockerignore — controls what Vercel sends to Docker as the build context
+# when it builds Dockerfile.vercel. Smaller context = faster builds, and it
+# keeps secrets + local files out of the image layers entirely.
+
+# Version-control internals — never needed inside the image
 .git
 .github
+
+# Local tooling & editor cruft
 .husky
 .freebuff
 .idea
 .vscode
+
+# Dependencies — reinstalled fresh inside the Dockerfile's own stages
 node_modules
 vendor
+
+# Laravel runtime dirs — recreated inside the Dockerfile
 storage
 tests
 public/build
+
+# Secrets! Never ship .env files into the image
 .env
 .env.*
-!.env.example
+!.env.example        # exception: the template IS safe to include
+
+# Logs & OS junk
 *.log
 .DS_Store
 Thumbs.db

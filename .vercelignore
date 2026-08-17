@@ -1,17 +1,32 @@
+# .vercelignore — controls what Vercel uploads when it builds/deploys this
+# project (same idea as .dockerignore, but for the Vercel build itself).
+# Keep it in sync with .dockerignore.
+
+# Version-control internals — never needed for the build
 .git
 .github
+
+# Local tooling & editor cruft
 .husky
 .freebuff
 .idea
 .vscode
+
+# Dependencies — installed fresh during the build
 node_modules
 vendor
+
+# Laravel runtime dirs — recreated inside the container
 storage
 tests
 public/build
+
+# Secrets! Never upload .env files
 .env
 .env.*
-!.env.example
+!.env.example        # exception: the template IS safe to include
+
+# Logs & OS junk
 *.log
 .DS_Store
 Thumbs.db

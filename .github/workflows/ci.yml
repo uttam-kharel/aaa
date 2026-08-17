@@ -1,10 +1,14 @@
+# ci.yml — "Quality checks" workflow.
+# Runs on every push to main/development/production and on every pull request.
+# Can also be called from other workflows: deploy.yml reuses it via
+# `uses: ./.github/workflows/ci.yml`. Nothing here deploys — it only verifies.
 name: CI
 
 on:
     push:
-        branches: [main, development, production]
-    pull_request:
-    workflow_call:
+        branches: [main, development, production] # run on direct pushes
+    pull_request:                                  # run on every PR
+    workflow_call:                                 # let other workflows reuse this job
 
 jobs:
     quality:
@@ -12,6 +16,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+              # ^ Fetch the repository so the runner can work with the code
 
             - name: Setup PHP
               uses: shivammathur/setup-php@v2
@@ -20,6 +25,8 @@ jobs:
                   extensions: mbstring, intl, bcmath, sqlite3
                   coverage: none
                   tools: composer:v2
+              # ^ PHP 8.4 + extensions needed for tests. sqlite3 covers the local
+              #   DB; Postgres drivers aren't needed here (tests run on sqlite).
 
             - name: Cache Composer dependencies
               uses: actions/cache@v4
@@ -27,30 +34,40 @@ jobs:
                   path: vendor
                   key: composer-${{ hashFiles('composer.lock') }}
                   restore-keys: composer-
+              # ^ Cache vendor/ between runs. The cache key is derived from
+              #   composer.lock, so it only invalidates when the lock changes.
 
             - name: Install PHP dependencies
               run: composer install --no-interaction --prefer-dist --no-progress
+              # ^ Exact versions from composer.lock (no --no-dev: tests need them)
 
             - name: Check code style (Pint)
               run: ./vendor/bin/pint --test
+              # ^ Fails the build if any PHP file breaks Laravel Pint style rules
 
             - name: Run tests
               run: |
                   cp .env.example .env
                   php artisan key:generate
                   php artisan test
+              # ^ Build a throwaway env from the template, generate an APP_KEY,
+              #   then run the full PHPUnit suite (tests/).
 
             - name: Setup Node
               uses: actions/setup-node@v4
               with:
                   node-version: 22
                   cache: npm
+              # ^ Node 22 with npm cache for faster installs
 
             - name: Install Node dependencies
               run: npm ci --no-audit --no-fund
+              # ^ Exact frontend deps from package-lock.json
 
             - name: Lint CSS
               run: npm run lint:css
+              # ^ Stylelint checks on resources/css
 
             - name: Build frontend assets
               run: npm run build
+              # ^ Verify Vite compiles — catches broken CSS/JS before deploy

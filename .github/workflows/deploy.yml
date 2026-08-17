@@ -1,19 +1,26 @@
+# deploy.yml — Production + preview deploys to Vercel.
+# Triggers ONLY on pushes and PRs targeting the `production` branch.
+# Merging a PR into production = quality checks + migrations + live deploy.
 name: Deploy to Vercel
 
 on:
     push:
-        branches: [production]
+        branches: [production] # a push/merge to production deploys
     pull_request:
-        branches: [production]
+        branches: [production] # PRs to production get a preview deploy
 
 concurrency:
     group: vercel-${{ github.ref }}
     cancel-in-progress: false
+    # ^ Serialize deploys per branch so two merges can't race. With
+    #   cancel-in-progress: false, a queued deploy runs rather than being killed.
 
 jobs:
     quality:
         name: Quality checks
         uses: ./.github/workflows/ci.yml
+        # ^ Reuse the same checks as every other push — nothing deploys
+        #   until these pass.
 
     preview:
         name: Preview deploy (PR)
@@ -22,6 +29,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+              # ^ Fetch the PR's code
 
             - name: Deploy preview to Vercel
               id: preview
@@ -34,6 +42,10 @@ jobs:
                   OUTPUT="$(npx --yes vercel@latest deploy --yes --token "$VERCEL_TOKEN" 2>&1)"
                   URL="$(printf '%s' "$OUTPUT" | grep -oE 'https://[a-zA-Z0-9.-]+\.(vercel|app)' | tail -1)"
                   echo "url=$URL" >> "$GITHUB_OUTPUT"
+              # ^ Uses the OFFICIAL Vercel CLI (no third-party action) with your
+              #   account's token/org/project from GitHub secrets. Deploys this PR
+              #   as a preview and captures its URL into $GITHUB_OUTPUT.
+              #   continue-on-error: a preview failure won't block the PR.
 
             - name: Comment preview URL on the PR
               if: steps.preview.outputs.url != ''
@@ -48,6 +60,8 @@ jobs:
                       });
               env:
                   PREVIEW_URL: ${{ steps.preview.outputs.url }}
+              # ^ Posts the preview URL as a comment on the PR so reviewers
+              #   can click straight to the deployed version.
 
     production:
         name: Production deploy
@@ -56,6 +70,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+              # ^ Fetch the production branch's code
 
             - name: Setup PHP
               uses: shivammathur/setup-php@v2
@@ -64,9 +79,12 @@ jobs:
                   extensions: mbstring, intl, bcmath, pgsql, pdo_pgsql
                   coverage: none
                   tools: composer:v2
+              # ^ PHP 8.4 with the Postgres drivers this time — migrations run
+              #   against the real Vercel Postgres database.
 
             - name: Install PHP dependencies
               run: composer install --no-dev --no-interaction --prefer-dist --no-progress
+              # ^ Production install (no dev-only packages)
 
             - name: Run database migrations
               env:
@@ -75,6 +93,8 @@ jobs:
                   DB_URL: ${{ secrets.DB_URL }}
                   DB_SSLMODE: require
               run: php artisan migrate --force
+              # ^ Apply schema changes to Vercel Postgres BEFORE the new code
+              #   goes live, using the DB_URL GitHub secret (non-pooling URL).
 
             - name: Deploy to Vercel (production)
               env:
@@ -82,3 +102,4 @@ jobs:
                   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
                   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
               run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+              # ^ Official CLI again, with --prod: replaces the live deployment.
