@@ -7,6 +7,18 @@ image storage, the git workflow, and troubleshooting.
 
 **Remote**: `https://github.com/uttam-kharel/aaa.git` (branches: `development`, `production`)
 
+## 0. Quick start — do these in order (every step is explained below)
+
+1. [ ] Install the tools: PHP 8.3+, Composer, Node 20+, Git (Docker only needed for the optional image test)
+2. [ ] Clone the repo and set up locally (§3) — you should see the coming-soon page at `http://localhost:8000`
+3. [ ] Create the Vercel project, Postgres and Blob stores (§6.1–6.2)
+4. [ ] Add the Vercel environment variables (§6.3)
+5. [ ] Add the GitHub secrets (§6.4)
+6. [ ] Create the `production` branch (§10) — needed for the deploy trigger
+7. [ ] Push to GitHub and watch the CI run pass (§7)
+8. [ ] Open a PR `development` → `production` and merge it — this deploys (§11)
+9. [ ] Run `php artisan blob:test` to confirm image storage works (§9)
+
 ---
 
 ## 1. What this project is
@@ -84,13 +96,16 @@ cp .env.example .env        # create local env (sqlite by default)
 php artisan key:generate    # sets APP_KEY in .env
 npm install
 
-php artisan migrate         # create sqlite db + tables (users, cache, jobs, sessions)
+touch database/database.sqlite   # create the empty sqlite file
+php artisan migrate              # create tables (users, cache, jobs, sessions)
 
 npm run dev                 # terminal 1: Vite dev server
 php artisan serve           # terminal 2: http://localhost:8000
 ```
 
-Or run everything with one command: `composer run dev`.
+**Success looks like**: `http://localhost:8000` shows the Shubham International Hospital
+coming-soon page, and `php artisan test` passes. Or run the full stack with one command:
+`composer run dev`.
 
 Common commands:
 
@@ -216,6 +231,9 @@ vercel link           # inside this repo; choose "Other" framework preset
 ```
 
 Writes `.vercel/project.json` (gitignored) with `orgId` and `projectId`.
+
+**Success looks like**: the file `.vercel/project.json` exists locally with `orgId` and
+`projectId` values (you'll need those for the GitHub secrets in §6.4).
 
 > The container runtime is a Vercel product feature — confirm your plan includes container
 > images (the dashboard warns during project setup if not).
@@ -607,6 +625,22 @@ Storage::disk('s3')->files('doctors/');   // list files under a prefix
 - **`development`** — active development; push here freely.
 - **`production`** — what's live. Only via PRs merged from `development` (deploy happens on
   merge).
+
+### Create the `production` branch (first time only)
+
+The deploy workflow only triggers on pushes to `production`, so the branch must exist.
+Easiest one-liner (creates it on GitHub at the current `development` tip):
+
+```bash
+git push origin development:production
+git branch production origin/production
+git checkout production
+git checkout development   # back to working
+```
+
+Or via the GitHub UI: **repo → Branches → New branch → name `production`, source
+`development`**.
+
 - Commit style: conventional commits (`feat:`, `fix:`, `chore:`, ...) enforced by
   commitlint + husky. Prettier/Pint auto-run on staged files.
 
