@@ -1,0 +1,28 @@
+/*
+ * Shubham International Hospital — design tokens
+ *
+ * Tailwind v4 theme (CSS-first). Imported by app.css.
+ * Colors are exposed as utilities, e.g. bg-primary-700, text-accent-500.
+ */
+
+@theme {
+    /* Fonts */
+    --font-sans:
+        'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+        'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /* Brand blues */
+    --color-primary-100: #82c8d7;
+    --color-primary-300: #3a86a5;
+    --color-primary-500: #0369b4;
+    --color-primary-600: #086b9e;
+    --color-primary-700: #046095;
+    --color-primary-800: #0b5f86;
+
+    /* Teal accents */
+    --color-accent-400: #0aa3a2;
+    --color-accent-500: #069ca2;
+
+    /* Surfaces */
+    --color-surface: #fefdfd;
+}
