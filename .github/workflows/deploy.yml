@@ -1,0 +1,84 @@
+name: Deploy to Vercel
+
+on:
+    push:
+        branches: [production]
+    pull_request:
+        branches: [production]
+
+concurrency:
+    group: vercel-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    quality:
+        name: Quality checks
+        uses: ./.github/workflows/ci.yml
+
+    preview:
+        name: Preview deploy (PR)
+        if: github.event_name == 'pull_request'
+        needs: quality
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Deploy preview to Vercel
+              id: preview
+              continue-on-error: true
+              env:
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+                  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+                  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+              run: |
+                  OUTPUT="$(npx --yes vercel@latest deploy --yes --token "$VERCEL_TOKEN" 2>&1)"
+                  URL="$(printf '%s' "$OUTPUT" | grep -oE 'https://[a-zA-Z0-9.-]+\.(vercel|app)' | tail -1)"
+                  echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+            - name: Comment preview URL on the PR
+              if: steps.preview.outputs.url != ''
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      github.rest.issues.createComment({
+                          issue_number: context.issue.number,
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          body: `🚀 Preview deployment: ${process.env.PREVIEW_URL}`,
+                      });
+              env:
+                  PREVIEW_URL: ${{ steps.preview.outputs.url }}
+
+    production:
+        name: Production deploy
+        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        needs: quality
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.4'
+                  extensions: mbstring, intl, bcmath, pgsql, pdo_pgsql
+                  coverage: none
+                  tools: composer:v2
+
+            - name: Install PHP dependencies
+              run: composer install --no-dev --no-interaction --prefer-dist --no-progress
+
+            - name: Run database migrations
+              env:
+                  APP_ENV: production
+                  DB_CONNECTION: pgsql
+                  DB_URL: ${{ secrets.DB_URL }}
+                  DB_SSLMODE: require
+              run: php artisan migrate --force
+
+            - name: Deploy to Vercel (production)
+              env:
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+                  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+                  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+              run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"

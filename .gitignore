@@ -27,6 +27,7 @@ yarn-error.log*
 /public/storage
 /public/hot
 /public/build
+/.vercel
 /.phpunit.cache
 .phpunit.result.cache
 .phpactor.json
