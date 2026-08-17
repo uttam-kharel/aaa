@@ -1,5 +1,20 @@
+# Listen on the port Vercel injects as $PORT (default 80 if unset).
+# Vercel REQUIRES the container to serve on $PORT — hardcoding 80
+# here causes 502 Bad Gateway errors in production.
 :{$PORT:80} {
+
+    # Document root: Laravel's public/ directory is the only part of
+    # the app exposed to the web (index.php, compiled assets, favicons).
     root * /app/public
+
+    # Compress responses — prefer zstd, fall back to gzip — to cut
+    # bandwidth and speed up page loads.
     encode zstd gzip
+
+    # FrankenPHP's PHP handler. Two jobs:
+    #   1. Executes .php files directly, and
+    #   2. rewrites any request that isn't a real file to /index.php —
+    #      Laravel's front controller, which routes it via routes/web.php.
+    #      This is what makes pretty URLs like /doctors work.
     php_server
 }

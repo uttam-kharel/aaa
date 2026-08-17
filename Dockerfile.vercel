@@ -1,48 +1,95 @@
 # syntax=docker/dockerfile:1
+# ^ Tells Docker/BuildKit which parser version to use. The "1" syntax
+#   enables modern features like multi-stage builds and COPY --from.
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------
 # Stage 1: Build frontend assets with Vite
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------
 FROM node:22-alpine AS assets
+# ^ Start from a small Linux image with Node.js 22. Name this stage
+#   "assets" so a later stage can copy files out of it. This stage
+#   exists only to produce public/build — it is discarded afterwards.
+
 WORKDIR /app
+# ^ Every command below runs inside /app in the image.
+
 COPY package.json package-lock.json ./
+# ^ Copy ONLY the two package files first. Docker caches each layer,
+#   so if these haven't changed, the next step is reused from cache
+#   and the build is much faster on repeat deploys.
+
 RUN npm ci --no-audit --no-fund
+# ^ Install the exact frontend dependencies pinned in package-lock.json.
+#   --no-audit skips the security-audit network call;
+#   --no-fund skips the "please donate" funding messages.
+
 COPY . .
+# ^ Copy the rest of the project source into the image.
+
 RUN npm run build
+# ^ Run Vite: compiles Tailwind CSS and JS into public/build.
+#   These generated files are what the runtime stage will serve.
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------
 # Stage 2: Install PHP dependencies
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------
 FROM composer:2 AS dependencies
-WORKDIR /app
-COPY composer.json composer.lock ./
-RUN composer install \
-        --no-dev \
-        --no-interaction \
-        --no-progress \
-        --no-scripts \
-        --prefer-dist \
-        --optimize-autoloader
+# ^ Start from the official Composer image (PHP + Composer). Named
+#   "dependencies" because this stage's only job is to produce vendor/.
 
-# ---------------------------------------------------------------
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+# ^ Same caching trick as stage 1: copy manifests first so the
+#   composer install below is cached unless the lock file changed.
+
+RUN composer install \
+        --no-dev \          # skip dev-only packages in production
+        --no-interaction \  # never prompt for input (CI-safe)
+        --no-progress \     # keep logs clean (no progress bars)
+        --no-scripts \      # defer post-install scripts to stage 3
+        --prefer-dist \     # download zip archives instead of git clones
+        --optimize-autoloader
+# ^ Installs the exact PHP packages pinned in composer.lock into vendor/.
+
+# -----------------------------------------------------------------
 # Stage 3: Runtime — FrankenPHP (Caddy + PHP)
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------
 FROM dunglas/frankenphp:1-php8.4-alpine
+# ^ The final image: FrankenPHP bundles Caddy (web server) + PHP 8.4.
+#   ONLY this stage is deployed. Stages 1 and 2 are throwaway
+#   build environments — we just copy their results in below.
 
 WORKDIR /app
 
 # PHP extensions required by Laravel + Postgres (Vercel Postgres)
 RUN install-php-extensions pdo_pgsql pgsql intl bcmath gd exif zip
+# ^ pdo_pgsql/pgsql -> talk to Vercel Postgres
+#   gd / exif        -> image handling (resize, read metadata)
+#   intl bcmath zip  -> Laravel framework requirements
 
 # Composer binary is needed later to rebuild the optimized autoloader
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# ^ Copy the Composer binary out of stage 2's image into this one,
+#   so we can run composer dump-autoload below.
 
 # Application code (build assets are copied last so they win)
 COPY . .
+# ^ Copy the full app source into the runtime image.
+
 COPY --from=assets /app/public/build ./public/build
+# ^ Copy the compiled Vite assets from stage 1. Placed AFTER
+#   `COPY . .` on purpose, so it overwrites any stale build output
+#   that came with the source tree.
+
 COPY --from=dependencies /app/vendor ./vendor
+# ^ Copy the production PHP dependencies from stage 2. Same ordering
+#   trick: it replaces whatever (possibly dev-flavored) vendor/
+#   directory `COPY . .` brought in.
 
 COPY Caddyfile /etc/caddy/Caddyfile
+# ^ Install our web-server config at Caddy's expected location,
+#   so `frankenphp run --config /etc/caddy/Caddyfile` finds it.
 
 # Refresh the autoloader inside the runtime image and register packages
 RUN composer dump-autoload --no-dev --optimize --classmap-authoritative \
@@ -50,9 +97,20 @@ RUN composer dump-autoload --no-dev --optimize --classmap-authoritative \
     && mkdir -p storage/framework/sessions storage/framework/views storage/framework/cache storage/logs \
     && chmod -R 775 storage bootstrap/cache \
     && chmod +x vercel-entrypoint.sh
+# ^ composer dump-autoload -> regenerate the autoloader for THIS image
+#   (stage 2 skipped scripts, so its vendor/ isn't wired up yet)
+#   php artisan package:discover -> let Laravel register installed packages
+#   mkdir -p ... -> create Laravel's writable runtime directories
+#   chmod -R 775 -> ensure the PHP process can write to them
+#   chmod +x     -> mark the boot script executable
 
 ENV PORT=80
+# ^ Default port the container listens on; Vercel overrides it at runtime.
+
 EXPOSE 80
+# ^ Documentation only: declares that the container serves on port 80.
 
 # Cache config/routes/views at startup (env vars are injected by Vercel at runtime)
 CMD ["/app/vercel-entrypoint.sh"]
+# ^ The command executed when the container starts. It runs the boot
+#   script that caches Laravel config and starts FrankenPHP.
